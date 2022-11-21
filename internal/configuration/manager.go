@@ -38,12 +38,15 @@ type Manager struct {
 	statusReader WorkloadStatusReader
 }
 
-func New() *Manager {
+func New(profileManagerEnabled bool) *Manager {
 	m := &Manager{
-		conf:           defaultConfiguration,
-		SchedulerCh:    make(chan entity.Message, 10),
-		StateManagerCh: make(chan entity.Message),
-		hardware:       NewHardwareInfo().GetHardwareInformation(),
+		conf:        defaultConfiguration,
+		SchedulerCh: make(chan entity.Message, 10),
+		hardware:    NewHardwareInfo().GetHardwareInformation(),
+	}
+
+	if profileManagerEnabled {
+		m.StateManagerCh = make(chan entity.Message)
 	}
 
 	return m
@@ -82,11 +85,13 @@ func (c *Manager) SetConfiguration(newConf entity.DeviceConfigurationMessage) {
 		Payload: o,
 	}
 
-	// send profiles to state manager
-	if deviceProfiles, err := c.createDeviceProfiles(newConf.Configuration.Profiles); err != nil {
-		zap.S().Errorw("cannot parse profiles", "error", err)
-	} else {
-		c.StateManagerCh <- entity.Message{Kind: entity.ProfileConfigurationMessage, Payload: deviceProfiles}
+	if c.StateManagerCh != nil {
+		// send profiles to state manager
+		if deviceProfiles, err := c.createDeviceProfiles(newConf.Configuration.Profiles); err != nil {
+			zap.S().Errorw("cannot parse profiles", "error", err)
+		} else {
+			c.StateManagerCh <- entity.Message{Kind: entity.ProfileConfigurationMessage, Payload: deviceProfiles}
+		}
 	}
 
 	c.conf = newConf

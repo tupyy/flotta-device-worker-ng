@@ -24,13 +24,14 @@ import (
 )
 
 var (
-	configFile string
-	caRoot     string
-	certFile   string
-	privateKey string
-	server     string
-	namespace  string
-	logLevel   string
+	configFile            string
+	caRoot                string
+	certFile              string
+	privateKey            string
+	server                string
+	namespace             string
+	logLevel              string
+	profileManagerEnabled bool
 )
 
 const (
@@ -60,14 +61,17 @@ var rootCmd = &cobra.Command{
 			panic(err)
 		}
 
-		confManager := configuration.New()
+		confManager := configuration.New(profileManagerEnabled)
 		executor, err := executor.New()
 		if err != nil {
 			panic(err)
 		}
 
 		controller := edge.New(httpClient, confManager, certManager)
-		profileManager := profile.New(confManager.StateManagerCh)
+		var profileManager *profile.Manager
+		if profileManagerEnabled {
+			profileManager = profile.New(confManager.StateManagerCh)
+		}
 		resourceManager := resources.New()
 		// setup scheduler
 		scheduler := scheduler.New(executor, resourceManager)
@@ -77,8 +81,12 @@ var rootCmd = &cobra.Command{
 		// starting in right order the controller, scheduler and profile manager
 		ctx, cancel := context.WithCancel(context.Background())
 		controller.Start(ctx)
-		scheduler.Start(ctx, confManager.SchedulerCh, profileManager.OutputCh)
-		profileManager.Start(ctx)
+		if profileManagerEnabled {
+			scheduler.Start(ctx, confManager.SchedulerCh, profileManager.OutputCh)
+			profileManager.Start(ctx)
+		} else {
+			scheduler.Start(ctx, confManager.SchedulerCh, nil)
+		}
 
 		done := make(chan os.Signal, 1)
 		signal.Notify(done, os.Interrupt, os.Kill)
@@ -87,7 +95,9 @@ var rootCmd = &cobra.Command{
 
 		cancel()
 		controller.Shutdown(ctx)
-		profileManager.Shutdown(ctx)
+		if profileManagerEnabled {
+			profileManager.Shutdown(ctx)
+		}
 	},
 }
 
@@ -106,6 +116,7 @@ func init() {
 	rootCmd.Flags().StringVar(&server, "server", "", "server address")
 	rootCmd.Flags().StringVar(&namespace, "namespace", "default", "target namespace")
 	rootCmd.Flags().StringVar(&logLevel, "log-level", "info", "log level")
+	rootCmd.Flags().BoolVar(&profileManagerEnabled, "enable-profile-manager", true, "enable profile manager")
 }
 
 func setupLogger() *zap.Logger {
@@ -122,9 +133,7 @@ func setupLogger() *zap.Logger {
 			LineEnding:     zapcore.DefaultLineEnding,
 			EncodeTime:     zapcore.RFC3339TimeEncoder,
 			EncodeLevel:    zapcore.LowercaseLevelEncoder,
-			EncodeDuration: zapcore.MillisDurationEncoder,
-			EncodeCaller:   zapcore.ShortCallerEncoder,
-		},
+			EncodeDuration: zapcore.MillisDurationEncoder, EncodeCaller: zapcore.ShortCallerEncoder},
 		OutputPaths:      []string{"stdout"},
 		ErrorOutputPaths: []string{"stderr"},
 	}
